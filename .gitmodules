@@ -1,0 +1,3 @@
+[submodule "references/learn-nano-vllm"]
+	path = references/learn-nano-vllm
+	url = https://github.com/bcefghj/learn-nano-vllm.git
