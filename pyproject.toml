@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nano-vllm-from-scratch"
+version = "0.1.0"
+description = "Build an LLM inference engine from scratch, with reproducible performance experiments."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nanovllm_scratch"]
