@@ -9,7 +9,15 @@ description = "Build an LLM inference engine from scratch, with reproducible per
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "torch>=2.6,<3",
+    "transformers>=4.57,<5",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nanovllm_scratch"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+]
