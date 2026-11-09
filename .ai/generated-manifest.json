@@ -1,0 +1,25 @@
+{
+  "files": {
+    ".agents/skills/learning-code-review/SKILL.md": {
+      "mode": 420,
+      "sha256": "bcf0e32dda80de3fc3208a597e5f1ee918007942090a03461b90ebf1023fc2f0"
+    },
+    "AGENTS.md": {
+      "mode": 420,
+      "sha256": "ec99bbc594d51959a61c0af338aa85ccbeaf5b73f5f62584f9d373fd50d9e069"
+    },
+    "docs/AGENTS.md": {
+      "mode": 420,
+      "sha256": "7762efa00b0a2a5f896fbf9d0357660337591648a26d871b5a16223032acf1b8"
+    },
+    "src/nanovllm_scratch/AGENTS.md": {
+      "mode": 420,
+      "sha256": "dcd63add9a7f28a56540a742ab345bc6a7e78774144fbee2ddb79135f517c2f6"
+    },
+    "tests/AGENTS.md": {
+      "mode": 420,
+      "sha256": "8f152ce05546b2f978690e5b65dc40abd10bd07463396817053acc279c928190"
+    }
+  },
+  "version": 1
+}
