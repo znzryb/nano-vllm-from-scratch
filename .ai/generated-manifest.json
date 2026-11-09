@@ -6,7 +6,7 @@
     },
     "AGENTS.md": {
       "mode": 420,
-      "sha256": "ec99bbc594d51959a61c0af338aa85ccbeaf5b73f5f62584f9d373fd50d9e069"
+      "sha256": "77c80f7a4239953e9264edd80c7cde5c8e50609266a39f87fc178ae450f86c5c"
     },
     "docs/AGENTS.md": {
       "mode": 420,
@@ -14,7 +14,7 @@
     },
     "src/nanovllm_scratch/AGENTS.md": {
       "mode": 420,
-      "sha256": "dcd63add9a7f28a56540a742ab345bc6a7e78774144fbee2ddb79135f517c2f6"
+      "sha256": "4ae086fc48aa0b0033ce9f3d6a82bc4e7c9b5a6120d25ea159f7f4d91062bee6"
     },
     "tests/AGENTS.md": {
       "mode": 420,
