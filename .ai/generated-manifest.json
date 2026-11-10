@@ -2,7 +2,7 @@
   "files": {
     ".agents/skills/learning-code-review/SKILL.md": {
       "mode": 420,
-      "sha256": "dd74ea1d879cbdfa6b8fccd9ea2c9f24e4c54ae79735f7debcb61be8e8319a5b"
+      "sha256": "fd52f9d8df3ee7fd94bb5b9a567174eb5415253c06afaa08cfa626ef77d74136"
     },
     ".agents/skills/project-git-workflow/SKILL.md": {
       "mode": 420,
@@ -10,7 +10,7 @@
     },
     "AGENTS.md": {
       "mode": 420,
-      "sha256": "7a40599c642db0190ff98810c6225ec4d50c5c0e2376d63b2f4a0fb4f189d722"
+      "sha256": "69e206b9e242ac4220cfc77951bd246b6a9458669d706db4fff91709b61c59d8"
     },
     "docs/AGENTS.md": {
       "mode": 420,

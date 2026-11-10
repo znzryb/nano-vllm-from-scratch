@@ -55,17 +55,17 @@ class BaseLine:
 
         # 输入约定：
         # input_ids 是 torch.long 类型的整数张量。
-        # 形状为 [1, S]：1 表示单请求，S 表示当前序列长度。
+        # 形状为 [1, seq]：1 表示单请求，seq 表示当前序列长度。
         # 当前不接收字符串，不处理 padding。
 
         # 输出约定：
-        # 返回 logits 张量，形状为 [1, S, V]。
-        # V 是词表大小，不是 hidden_size。
+        # 返回 logits 张量，形状为 [1, seq, vocab]。
+        # vocab 是词表大小，d_model 是隐藏维度。
         # logits 是未经 softmax 的分数。
 
         # 第一步：检查输入。
         # 确认是二维张量，batch size 为 1，dtype 为 torch.long。
-        # 确认 1 <= S <= self.max_sequence_len。
+        # 确认 1 <= seq <= self.max_sequence_len。
         # token ID 必须在 [0, self.config.vocab_size) 范围内。
         # 不合法时明确报错，不默默截断或转换浮点输入。
         if not isinstance(input_ids, torch.Tensor):
@@ -101,7 +101,7 @@ class BaseLine:
         outputs = self.model(input_ids, use_cache=False, return_dict=True)
         # 第四步：提取 logits。
         # 从模型返回对象的 .logits 属性读取预测分数。
-        # 默认保留全部 S 个位置，结果形状应为 [1, S, V]。
+        # 默认保留全部 seq 个位置，结果形状应为 [1, seq, vocab]。
 
         # 第五步：返回 logits。
         # 此处不做 softmax、argmax、采样或文本解码。
