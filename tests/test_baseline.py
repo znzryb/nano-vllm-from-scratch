@@ -1,6 +1,8 @@
 """验证用户的 baseline；微型权重仅在临时目录生成，不访问 Hub。"""
 
 import os
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -109,6 +111,142 @@ def test_repeated_calls_do_not_leak_request_state(tiny_baseline):
     first = baseline.forward(input_ids)
     baseline.forward(torch.tensor([[5, 6, 7]]))
     torch.testing.assert_close(baseline.forward(input_ids), first)
+
+
+def scripted_generator(frames=(), eos_token_id=2):
+    """固定前向输出以隔离生成控制流；不实现模型或另一套解码算法。"""
+    baseline = BaseLine.__new__(BaseLine)
+    baseline.device = "cpu"
+    baseline.config = SimpleNamespace(vocab_size=8)
+    baseline.max_sequence_len = 8
+    baseline.eos_token_id = eos_token_id
+    baseline.forward = Mock(side_effect=list(frames))
+    return baseline
+
+
+def test_generate_zero_tokens_does_not_call_forward():
+    baseline = scripted_generator()
+    assert baseline.generate(torch.tensor([[3, 4]]), max_new_tokens=0) == []
+    baseline.forward.assert_not_called()
+
+
+@pytest.mark.parametrize("distract_with_earlier_position", [False, True])
+def test_generate_selects_token_from_last_position(distract_with_earlier_position):
+    logits = torch.full((1, 2, 8), -10.0)
+    logits[0, -1, 3] = 10.0
+    if distract_with_earlier_position:
+        logits[0, 0, 5] = 100.0
+    baseline = scripted_generator([logits])
+    assert baseline.generate(torch.tensor([[6, 7]]), max_new_tokens=1) == [3]
+
+
+def test_generate_includes_first_eos_and_stops_immediately():
+    logits = torch.zeros((1, 1, 8))
+    logits[0, 0, 2] = 10.0
+    baseline = scripted_generator([logits])
+    assert baseline.generate(torch.tensor([[3]]), max_new_tokens=4) == [2]
+    assert baseline.forward.call_count == 1
+
+
+def test_generate_stops_at_eos_after_a_regular_token():
+    first = torch.zeros((1, 1, 8))  # 相同分数时，greedy 选择最小索引 0。
+    second = torch.zeros((1, 2, 8))
+    second[0, -1, 2] = 10.0
+    # 额外输出使错误实现继续执行后也能报告结果差异，而非耗尽 Mock。
+    baseline = scripted_generator([
+        first, second, torch.zeros((1, 3, 8)), torch.zeros((1, 4, 8)),
+    ])
+    assert baseline.generate(torch.tensor([[3]]), max_new_tokens=4) == [0, 2]
+    assert baseline.forward.call_count == 2
+
+
+@pytest.mark.parametrize("eos_token_id", [2, None])
+def test_generate_passes_complete_sequence_and_preserves_prompt(eos_token_id):
+    frames = [torch.zeros((1, length, 8)) for length in (2, 3, 4)]
+    baseline = scripted_generator(frames, eos_token_id=eos_token_id)
+    prompt = torch.tensor([[3, 2]])  # prompt 结尾的 EOS 不应阻止生成。
+    original = prompt.clone()
+    result = baseline.generate(prompt, max_new_tokens=3)
+    assert result == [0, 0, 0]
+    assert all(type(token) is int for token in result)
+    assert baseline.forward.call_count == 3
+    for call, expected in zip(baseline.forward.call_args_list,
+                              ([[3, 2]], [[3, 2, 0]], [[3, 2, 0, 0]])):
+        actual = call.args[0]
+        assert actual.dtype == torch.long
+        assert actual.device.type == "cpu"
+        torch.testing.assert_close(actual, torch.tensor(expected))
+    torch.testing.assert_close(prompt, original)
+
+
+@pytest.mark.parametrize("value, error", [
+    (True, TypeError), (False, TypeError), (1.5, TypeError),
+    ("3", TypeError), (None, TypeError), (-1, ValueError),
+])
+def test_generate_rejects_invalid_token_budget(value, error):
+    baseline = scripted_generator()
+    with pytest.raises(error):
+        baseline.generate(torch.tensor([[3]]), max_new_tokens=value)
+    baseline.forward.assert_not_called()
+
+
+@pytest.mark.parametrize("value, error", [
+    ([1, 2], TypeError),
+    (torch.tensor([[1.0]]), TypeError),
+    (torch.tensor(1), ValueError),
+    (torch.tensor([1, 2]), ValueError),
+    (torch.ones((1, 1, 1), dtype=torch.long), ValueError),
+    (torch.tensor([[1], [2]]), ValueError),
+    (torch.empty((0, 1), dtype=torch.long), ValueError),
+    (torch.empty((1, 0), dtype=torch.long), ValueError),
+    (torch.ones((1, 9), dtype=torch.long), ValueError),
+    (torch.tensor([[-1]]), ValueError),
+    (torch.tensor([[8]]), ValueError),
+])
+def test_generate_validates_prompt_even_with_zero_budget(value, error):
+    baseline = scripted_generator()
+    with pytest.raises(error):
+        baseline.generate(value, max_new_tokens=0)
+    baseline.forward.assert_not_called()
+
+
+def test_generate_accepts_exact_context_budget():
+    baseline = scripted_generator([torch.zeros((1, 2, 8))], eos_token_id=0)
+    assert baseline.generate(torch.tensor([[3, 4]]), max_new_tokens=6) == [0]
+
+
+def test_generate_rejects_context_overflow_before_forward():
+    baseline = scripted_generator()
+    with pytest.raises(ValueError):
+        baseline.generate(torch.tensor([[3, 4]]), max_new_tokens=7)
+    baseline.forward.assert_not_called()
+
+
+def test_generate_keeps_requests_independent():
+    baseline = scripted_generator([
+        torch.zeros((1, length, 8)) for length in (1, 2, 1, 2)
+    ], eos_token_id=None)
+    first = baseline.generate(torch.tensor([[3]]), max_new_tokens=2)
+    second = baseline.generate(torch.tensor([[4]]), max_new_tokens=2)
+    assert first == second == [0, 0]
+    assert first is not second
+    torch.testing.assert_close(baseline.forward.call_args_list[2].args[0],
+                               torch.tensor([[4]]))
+
+
+def test_generate_matches_transformers_greedy_on_tiny_model(tiny_baseline):
+    baseline, reference = tiny_baseline
+    prompt = torch.tensor([[3, 4]])
+    with torch.inference_mode():
+        expected = reference.generate(
+            prompt,
+            max_new_tokens=3,
+            do_sample=False,
+            use_cache=False,
+            eos_token_id=2,
+            pad_token_id=0,
+        )
+    assert baseline.generate(prompt, max_new_tokens=3) == expected[0, 2:].tolist()
 
 
 @pytest.mark.skipif(not os.environ.get("BASELINE_MODEL_PATH"),
