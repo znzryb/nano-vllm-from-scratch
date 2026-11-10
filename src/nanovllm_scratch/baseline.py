@@ -1,4 +1,5 @@
 import torch
+from torch._C import dtype
 from transformers import AutoTokenizer, Qwen3ForCausalLM
 
 
@@ -107,3 +108,127 @@ class BaseLine:
         # 此处不做 softmax、argmax、采样或文本解码。
         # 选择下一个 token、拼接序列和判断 EOS，留给 generate。
         return outputs.logits
+
+    @torch.inference_mode()
+    def generate(
+            self,
+            input_ids: torch.Tensor,
+            max_new_tokens: int = 128,
+    ) -> list[int]:
+        # 职责：
+        # 根据 prompt，逐个生成后续 token。
+        # 每次选择预测分数最高的 token，即 greedy decoding。
+
+        # 输入约定：
+        # input_ids：prompt 的 token IDs，形状 [1, seq]，dtype 为 torch.long。
+        # max_new_tokens：最多新增多少个 token，不包含 prompt 的长度。
+
+        # 输出约定：
+        # 返回新增 token IDs 的 Python 列表，不包含 prompt。
+        # 如果生成了 EOS，返回列表包含这个 EOS。
+        # 不在这里将 token IDs 解码成文本。
+
+        # 第一步：检查参数。
+        # 对 input_ids 做与 forward 一致的合法性检查。
+        # max_new_tokens 必须是非负整数。
+        # 本版采用明确的长度策略：
+        # prompt 长度 + max_new_tokens 不得超过 self.max_sequence_len。
+        # 超出就报错，不自动截断 prompt 或减少生成数量。
+        if isinstance(max_new_tokens, bool):
+            raise TypeError(
+                f"Expected max_new_tokens to be int, got {type(max_new_tokens)}"
+            )
+        if not isinstance(max_new_tokens, int):
+            raise TypeError(
+                f"Expected max_new_tokens to be int, got {type(max_new_tokens)}"
+            )
+        if not max_new_tokens >= 0:
+            raise ValueError(
+                f"Expected max_new_tokens to be >= 0, got max_new_tokens={max_new_tokens}"
+            )
+
+        if not isinstance(input_ids, torch.Tensor):
+            raise TypeError(
+                f"Expected input_ids to be a torch.Tensor, got {type(input_ids)}"
+            )
+        if input_ids.dtype != torch.long:
+            raise TypeError(f"Expected input_ids.dtype to be torch.long, "
+                            f"got {input_ids.dtype}")
+        if input_ids.ndim != 2:
+            raise ValueError(f"Expected input_ids to be 2 dimensions, "
+                             f"got {input_ids.ndim} dimensions")
+
+        if not input_ids.shape[-1] + max_new_tokens <= self.max_sequence_len:
+            raise ValueError(
+                f"Expected prompt_len(input_ids.shape[-1]) + max_new_tokens to be <= self.max_sequence_len, "
+                f"got prompt_len(input_ids.shape[-1]) + max_new_tokens = {input_ids.shape[-1] + max_new_tokens} "
+                f"self.max_sequence_len:{self.max_sequence_len}"
+            )
+
+        if input_ids.shape[0] != 1:
+            raise ValueError(f"Expected input_ids to be 1 at first dimension (batch_size), "
+                             f"got {input_ids.shape[0]} at first dimension (batch_size)")
+        if not 1 <= input_ids.shape[-1] <= self.max_sequence_len:
+            raise ValueError(f"Expected input_ids.shape[-1] to be 1 <= input_ids.shape[-1] <= {self.max_sequence_len}, "
+                             f"got  input_ids.shape[-1]:{input_ids.shape[-1]}")
+        if torch.max(input_ids) >= self.config.vocab_size or torch.min(input_ids) < 0:
+            raise ValueError(f"Expected input_ids element (token_id) to be [0, {self.config.vocab_size}), "
+                             f"got min:{torch.min(input_ids)} max:{torch.max(input_ids)}")
+
+        # 第二步：处理不需要生成的情况。
+        # 如果 max_new_tokens 为 0，返回空列表。
+        # 此时不需要执行模型前向。
+        if max_new_tokens == 0:
+            return []
+        # 第三步：准备本次请求的状态。
+        # 将 prompt 移到 self.device，保持 torch.long。
+        # 用一个局部变量保存“当前完整序列”，起初只有 prompt。
+        # 创建一个局部列表，保存新增 token IDs。
+        # 不把这些请求状态保存在 self 上，避免影响下一次调用。
+        input_ids = input_ids.to(device=self.device)
+        # 第四步：开始生成循环，最多执行 max_new_tokens 次。
+        # 以下第五步到第八步，都放在循环内部。
+        new_token_ls = []
+        for i in range(max_new_tokens):
+            # 第五步：预测下一个 token。
+            # 将“当前完整序列”传给 self.forward，得到 [1, seq, vocab]。
+            # 无缓存模式每次都要传完整序列，不能只传最后一个 token。
+            # 取最后一个位置的 logits，得到 [1, vocab]。（vocab_size）
+            # 最后一个位置的输出，表示对下一个 token 的预测。
+            logits = self.forward(input_ids)
+            logits = logits[*logits.shape[:-2], logits.shape[-2] - 1]
+            # 第六步：按 greedy 策略选择 token。
+            # 沿词表维度做 argmax，得到分数最高的 token ID。
+            # 不需要先做 softmax，因为 softmax 不改变最大值的位置。
+            # 将这个 ID 转成 Python int，加入新增 token 列表。
+            # 这个 argmax 直接返回索引，.item 用来转化为这个 python 整数
+            # >>> x = torch.tensor([1.0])
+            # >>> x.item()
+            # 1.0
+            token_id = torch.argmax(logits).item()
+
+            # 第七步：检查 EOS。
+            # 如果 self.eos_token_id 不为 None，
+            # 且刚生成的 token 等于它，结束循环。
+            # 注意先保存 token，再判断停止，这样结果中包含 EOS。
+            # 不因 prompt 本身以 EOS 结尾就直接停止。
+            new_token_ls.append(token_id)
+            if self.eos_token_id is not None:
+                if token_id == self.eos_token_id:
+                    break
+
+            if len(new_token_ls) >= max_new_tokens:
+                break
+            # 第八步：更新下一轮的输入。
+            # 如果还要继续生成，将新 token 接到当前完整序列末尾。
+            # 新 token 张量需要是 [1, 1]，保持相同设备和 torch.long。
+            # 沿序列维度拼接，完整序列由 [1, seq] 变成 [1, seq + 1]。
+            # 拼接后的结果要保存，供下一轮 forward 使用。
+            input_ids = torch.cat((input_ids,
+                                   torch.tensor([[token_id]], dtype=torch.long, device=self.device))
+                                  , dim=1)  # dim 就是想要变长的那个维度
+
+        # 第九步：循环结束后返回新增 token 列表。
+        # 结束原因可能是遇到 EOS，或者达到 max_new_tokens。
+        # 返回列表长度不超过 max_new_tokens。
+        return new_token_ls
