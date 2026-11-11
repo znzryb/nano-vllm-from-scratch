@@ -318,9 +318,22 @@ def test_real_model_smoke():
         os.environ.get("BASELINE_DTYPE", "float32")
     ]
     baseline = BaseLine(os.environ["BASELINE_MODEL_PATH"], device=device, dtype=dtype)
-    input_ids = baseline.tokenizer("Hello", return_tensors="pt")["input_ids"]
+    prompt = "The capital of France is"
+    input_ids = baseline.tokenizer(prompt, return_tensors="pt")["input_ids"]
     logits = baseline.forward(input_ids)
     assert logits.shape == (1, input_ids.shape[1], baseline.config.vocab_size)
     assert logits.device.type == torch.device(device).type
     assert torch.isfinite(logits).all()
     assert not logits.requires_grad
+
+    max_new_tokens = 16
+    new_token_ids = baseline.generate(input_ids, max_new_tokens=max_new_tokens)
+    assert 0 < len(new_token_ids) <= max_new_tokens
+    assert all(type(token) is int and 0 <= token < baseline.config.vocab_size
+               for token in new_token_ids)
+    generated_text = baseline.tokenizer.decode(new_token_ids, skip_special_tokens=True)
+    # 使用 pytest -s 显示真实模型的续写；不对自然语言内容作固定断言。
+    print(f"\n设备：{device}，精度：{dtype}")
+    print(f"输入：{prompt}")
+    print(f"新增 token IDs：{new_token_ids}")
+    print(f"生成文本：{generated_text}")
