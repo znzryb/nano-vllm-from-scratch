@@ -193,10 +193,11 @@ class BaseLine:
             # 第五步：预测下一个 token。
             # 将“当前完整序列”传给 self.forward，得到 [1, seq, vocab]。
             # 无缓存模式每次都要传完整序列，不能只传最后一个 token。
-            # 取最后一个位置的 logits，得到 [1, vocab]。（vocab_size）
+            # 取最后一个位置的 logits，得到 [vocab]。（vocab_size）
             # 最后一个位置的输出，表示对下一个 token 的预测。
             logits = self.forward(input_ids)
-            logits = logits[*logits.shape[:-2], logits.shape[-2] - 1]
+            logits = logits[*(size - 1 for size in logits.shape[:-2]), logits.shape[-2] - 1]
+            # logits.unsqueeze(-1)
             # 第六步：按 greedy 策略选择 token。
             # 沿词表维度做 argmax，得到分数最高的 token ID。
             # 不需要先做 softmax，因为 softmax 不改变最大值的位置。
