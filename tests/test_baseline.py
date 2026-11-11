@@ -1,6 +1,8 @@
 """验证用户的 baseline；微型权重仅在临时目录生成，不访问 Hub。"""
 
 import os
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -247,6 +249,64 @@ def test_generate_matches_transformers_greedy_on_tiny_model(tiny_baseline):
             pad_token_id=0,
         )
     assert baseline.generate(prompt, max_new_tokens=3) == expected[0, 2:].tolist()
+
+
+def run_example(*arguments):
+    """通过公开命令行入口验证示例，不提供待实现的文本生成适配层。"""
+    return subprocess.run(
+        [sys.executable, "-m", "nanovllm_scratch.example", *arguments],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"},
+    )
+
+
+def test_example_help_without_loading_a_model():
+    result = run_example("--help")
+    assert result.returncode == 0, result.stderr
+    for option in ("--model-path", "--prompt", "--max-new-tokens", "--device", "--dtype"):
+        assert option in result.stdout
+
+
+@pytest.mark.parametrize("max_new_tokens", [0, 3])
+def test_example_prints_only_decoded_new_tokens(tiny_baseline, max_new_tokens):
+    """stdout 仅输出新增文本；跳过特殊 token，允许末尾一个换行。"""
+    baseline, reference = tiny_baseline
+    prompt = "hello world"
+    input_ids = baseline.tokenizer(prompt, return_tensors="pt")["input_ids"]
+    if max_new_tokens == 0:
+        expected_text = ""
+    else:
+        with torch.inference_mode():
+            expected_ids = reference.generate(
+                input_ids, max_new_tokens=max_new_tokens,
+                do_sample=False, use_cache=False,
+                eos_token_id=2, pad_token_id=0,
+            )
+        expected_text = baseline.tokenizer.decode(
+            expected_ids[0, input_ids.shape[1]:], skip_special_tokens=True,
+        )
+    result = run_example(
+        "--model-path", baseline.tokenizer.name_or_path,
+        "--prompt", prompt,
+        "--max-new-tokens", str(max_new_tokens),
+        "--device", "cpu", "--dtype", "float32",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout in (expected_text, expected_text + "\n")
+
+
+def test_example_reports_invalid_token_budget(tiny_baseline):
+    baseline, _ = tiny_baseline
+    result = run_example(
+        "--model-path", baseline.tokenizer.name_or_path,
+        "--prompt", "hello world", "--max-new-tokens", "-1",
+        "--device", "cpu", "--dtype", "float32",
+    )
+    assert result.returncode != 0
+    assert "max_new_tokens" in result.stderr or "--max-new-tokens" in result.stderr
+    assert result.stdout == ""
 
 
 @pytest.mark.skipif(not os.environ.get("BASELINE_MODEL_PATH"),
