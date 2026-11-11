@@ -1,19 +1,15 @@
 {
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
-  "python.languageServer": "Pylance",
-  "python.analysis.typeCheckingMode": "basic",
+  "python.languageServer": "None",
   "python.analysis.autoImportCompletions": true,
-  "python.analysis.extraPaths": ["./src"],
-  "python.analysis.exclude": [
-    "**/node_modules",
-    "**/__pycache__",
-    ".git",
-    ".venv",
-    "references"
-  ],
   "python.analysis.inlayHints.variableTypes": true,
   "python.analysis.inlayHints.functionReturnTypes": true,
   "python.analysis.inlayHints.callArgumentNames": "partial",
+  "python.pyrefly.disableLanguageServices": false,
+  "python.pyrefly.disableTypeErrors": false,
+  "python.pyrefly.diagnosticMode": "openFilesOnly",
+  "python.pyrefly.runnableCodeLens": true,
+  "pyrefly.pyreflyExecutable": "bundled",
   "python.testing.pytestEnabled": true,
   "python.testing.unittestEnabled": false,
   "python.testing.pytestArgs": ["tests"],
@@ -29,7 +25,8 @@
       "source.fixAll": "never",
       "source.organizeImports": "never",
       "source.fixAll.ruff": "never",
-      "source.organizeImports.ruff": "never"
+      "source.organizeImports.ruff": "never",
+      "source.fixAll.pyrefly": "never"
     }
   }
 }

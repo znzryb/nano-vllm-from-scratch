@@ -1,7 +1,7 @@
 {
   "recommendations": [
     "ms-python.python",
-    "ms-python.vscode-pylance",
+    "meta.pyrefly",
     "ms-python.debugpy",
     "ms-python.vscode-python-envs",
     "charliermarsh.ruff"

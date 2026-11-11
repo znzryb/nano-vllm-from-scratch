@@ -1,0 +1,5 @@
+project-includes = ["src", "tests"]
+project-excludes = ["references/**"]
+search-path = ["src"]
+python-version = "3.12"
+preset = "default"
