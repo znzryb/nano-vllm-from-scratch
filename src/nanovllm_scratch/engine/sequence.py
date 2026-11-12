@@ -1,6 +1,9 @@
 from copy import copy
 from enum import Enum, auto
 from itertools import count
+from typing import Any
+
+from nanovllm_scratch.sampling_params import SamplingParams
 
 
 # 推理请求的序列状态管理。
@@ -28,7 +31,9 @@ class Sequence:
     block_size = 256
     counter = count()
 
-    def __init__(self, token_ids: list[int], sampling_params):
+    def __init__(
+        self, token_ids: list[int], sampling_params: SamplingParams | None = None
+    ):
         # 第三步：实现构造函数 __init__。
         # 输入：token_ids 为非空的 prompt token ID 列表。
         # 输入：sampling_params 为生成参数，对应原版的 SamplingParams。
@@ -58,7 +63,7 @@ class Sequence:
         # block_table：逻辑块对应的物理 KV cache 块编号，初始为空列表。
         # 注意：逻辑上需要几个块，与实际已经分配几个物理块是两个概念。
         self.num_cached_tokens = 0
-        self.is_prefil = True
+        self.is_prefill = True
         self.block_table = []
         #
         # 3.4 本请求的生成参数。
@@ -66,7 +71,13 @@ class Sequence:
         # max_tokens：最多生成多少个新 token，不包含 prompt。
         # ignore_eos：是否忽略 EOS 停止条件。
         # 这里只保存参数，采样和停止判定在其他模块执行
-        pass
+        if sampling_params is None:
+            sampling_params = SamplingParams()
+        self.temperature = sampling_params.temperature
+        self.max_tokens = sampling_params.max_tokens
+        self.ignore_eos = sampling_params.ignore_eos
+        self.last_token = token_ids[-1]
+        self.num_scheduled_tokens = 0
 
     #
     # 第四步：实现基本访问接口。
@@ -74,22 +85,65 @@ class Sequence:
     # __getitem__：支持按索引访问 token，也支持按切片访问一段 token。
     # 输入：整数索引或切片；输出：单个 int 或 list[int]。
     # 检查点：刚创建时，长度与 prompt 长度相同，索引访问与保存的列表一致。
+    def __len__(self):
+        return self.num_tokens
+
+    def __getitem__(self, key: int | slice):
+        # key 也可以接收切片对象
+        return self.token_ids[key]
+
     #
     # 第五步：实现请求状态与 token 分段属性。
     # 以下属性均为读取接口，不修改请求状态。
     # is_finished：返回 bool，表示 status 是否为 FINISHED。
+    @property
+    def is_finished(self):
+        return self.status == SequenceStatus.FINISHED
+
     # num_completion_tokens：返回已经生成的新 token 数，不包含 prompt。
+    @property
+    def num_completion_tokens(self):
+        return self.num_tokens - self.num_prompt_tokens
+
     # prompt_token_ids：返回原始 prompt 对应的 token ID 列表。
+    @property
+    def prompt_token_ids(self):
+        return self.token_ids[: self.num_prompt_tokens]
+
     # completion_token_ids：返回新增 token ID 列表，不包含 prompt。
+    @property
+    def completion_token_ids(self):
+        return self.token_ids[self.num_prompt_tokens :]
+
     # 检查点：刚创建时，新增 token 数为 0，新增 token 列表为空。
     # 检查点：完整 token 内容由 prompt 和新增 token 两部分按顺序组成。
+
     #
     # 第六步：实现逻辑块的只读接口。
     # num_blocks：当前完整序列所需的逻辑块数，返回 int。
+    @property
+    def num_blocks(self):
+        return (self.num_tokens + self.block_size - 1) // self.block_size
+
     # last_block_num_tokens：最后一个逻辑块包含的 token 数，返回 int。
+    @property
+    def last_block_num_tokens(self):
+        return self.num_tokens - self.block_size * max(0, self.num_blocks - 1)
+
     # block(i)：返回第 i 个逻辑块对应的 token ID 列表，逻辑块从 0 编号。
     # block(i) 的输入必须落在有效逻辑块编号范围内。
     # block(i) 返回 token 内容；block_table 保存物理块编号，两者用途不同。
+    def block(self, idx: int):
+        if idx >= self.num_blocks:
+            raise ValueError(
+                f"Expected idx < num_blocks, got idx={idx},num_blocks={self.num_blocks}"
+            )
+        if idx < 0:
+            raise ValueError(f"Expected idx > 0, got idx={idx}")
+        left = max(0, idx * self.block_size)
+        right = (idx + 1) * self.block_size
+        return self.token_ids[left:right]
+
     # 检查点：长度分别为 1、block_size、block_size + 1 时，块划分正确。
     # 检查点：序列长度恰好为 block_size 时，最后一块包含 block_size 个 token。
     # 检查点：按顺序拼接所有逻辑块，能还原完整 token ID 列表。
@@ -102,6 +156,11 @@ class Sequence:
     # 新 token 尚未执行模型前向，不应仅因追加就算作已有 KV cache 的 token。
     # 此方法不负责采样、分配物理块或判定请求结束。
     # 检查点：追加前后，原始 prompt 内容不变，新增部分按追加顺序增长。
+    def append_token(self, token_id: int):
+        self.token_ids.append(token_id)
+        self.num_tokens += 1
+        self.last_token = token_id
+
     #
     # 第八步：后续接入多进程 ModelRunner 时，实现状态传输接口。
     # 单进程阶段可以先完成前七步，再处理这一部分。
@@ -112,13 +171,44 @@ class Sequence:
     # 原版元组依次包含：num_tokens、num_prompt_tokens、num_cached_tokens、
     # num_scheduled_tokens、block_table，以及本次执行需要的 token 信息。
     # Prefill 路径传完整 token 列表；Decode 路径传 last_token。
+    def __getstate__(self) -> tuple[int, int, int, int, list[Any], int | list[int]]:
+        if self.is_prefill:
+            last_state = self.token_ids
+        else:
+            last_state = self.last_token
+        return (
+            self.num_tokens,
+            self.num_prompt_tokens,
+            self.num_cached_tokens,
+            self.num_scheduled_tokens,
+            self.block_table,
+            last_state,
+        )
+
     #
     # __setstate__(state)：接收上述元组，恢复执行侧需要的字段，无业务返回值。
     # Prefill 状态恢复 token 列表与最后一个 token。
     # Decode 状态仅保留最后一个 token，原版此时将 token_ids 设为空列表。
     # 因此，恢复后的 Decode 对象不具备完整历史，不能用于查询完整生成文本。
+    def __setstate__(self, state):
+        (
+            self.num_tokens,
+            self.num_prompt_tokens,
+            self.num_cached_tokens,
+            self.num_scheduled_tokens,
+            self.block_table,
+            last_state,
+        ) = state
+        if isinstance(last_state, int):
+            self.token_ids = []
+            self.last_token = last_state
+            self.is_prefill = False
+        else:
+            self.token_ids = last_state
+            self.last_token = self.token_ids[-1]
+            self.is_prefill = True
+
     # 检查点：两种路径恢复后，计数、块表和执行所需 token 信息均与传输前一致。
     #
     # 最终验收：创建请求、读取属性、追加 token、跨块边界访问均符合上述约定。
     # 这些状态逻辑可以在 CPU 上验证，不需要模型权重或 GPU。
-    pass
