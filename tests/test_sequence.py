@@ -228,3 +228,28 @@ def test_serialization_transfers_execution_state(sequence_module, is_prefill, la
     assert restored.token_ids == ([17, 3, 29, 11] if is_prefill else [])
     # 执行侧的 Decode 对象没有完整历史；不要求恢复调度状态或生成参数。
     assert seq.token_ids == [17, 3, 29, 11]
+
+
+def test_serialization_can_reserialize_restored_decode_state(sequence_module):
+    # 覆盖恢复后的 Decode 对象再次传输；此时 token_ids 已为空。
+    seq = sequence_module.Sequence([17, 3, 29])
+    seq.append_token(11)
+    seq.num_cached_tokens = 2
+    seq.num_scheduled_tokens = 1
+    seq.block_table = [7]
+    seq.is_prefill = False
+    expected_state = (4, 3, 2, 1, [7], 11)
+
+    restored = pickle.loads(pickle.dumps(seq))
+    assert restored.token_ids == []
+    assert restored.last_token == 11
+    assert restored.is_prefill is False
+
+    retransmitted = pickle.loads(pickle.dumps(restored))
+
+    assert isinstance(retransmitted, sequence_module.Sequence)
+    assert retransmitted.__getstate__() == expected_state
+    assert len(retransmitted) == 4
+    assert retransmitted.token_ids == []
+    assert retransmitted.last_token == 11
+    assert retransmitted.is_prefill is False
