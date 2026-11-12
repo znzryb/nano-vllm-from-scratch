@@ -11,7 +11,9 @@
 # deque：保存可分配的物理块编号，支持从队首取块、向队尾归还块。
 # Sequence：读取请求的 token、逻辑块划分以及计算进度。
 # 原版用 xxhash.xxh64 计算哈希，用 NumPy 将 token IDs 编码为字节。
-# 当前项目未显式声明 xxhash 和 NumPy；采用这些工具时另行处理依赖。
+# NumPy 和 xxhash 已在 pyproject.toml 中声明，并由 uv.lock 锁定版本。
+# 运行 uv sync 会将它们安装到项目 .venv；NumPy 通常以 np 为导入别名。
+# deque 来自 Python 标准库 collections，不需要额外安装。
 #
 # 第二步：定义 Block，表示一个物理块的元数据。
 # __init__(block_id)：输入物理块编号，无业务返回值。
